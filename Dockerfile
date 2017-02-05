@@ -4,6 +4,8 @@ MAINTAINER lamont@fastrobot.com
 
 RUN apk update
 RUN apk add ruby ruby-dev ruby-libs ruby-bundler
+RUN apk add ca-certificates
+RUN update-ca-certificates
 RUN rm -r /var/cache/
 
 ADD app /opt/app

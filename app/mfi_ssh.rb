@@ -1,72 +1,73 @@
-require 'rubygems'
-require 'net/ssh'
-require 'json'
+class Mfi_exporter
 
-host = ENV['MFI_HOST']
-user = ENV['MFI_USER']
-command = 'mca-dump'
-# import a key and use that, not a password
-password = ENV['MFI_PASS']
-command_output = ''
-metrics_buffer = ''
+  def initialize
+    # is this a reasonable place to tuck these?
+    require 'rubygems'
+    require 'net/ssh'
+    require 'json'
+  end
 
-Net::SSH.start( host, user, :password => password) do |ssh|
-  command_output = ssh.exec!(command)
-end
+  def metrics(host, user, password)
 
-mca = JSON.parse(command_output)
-hostname, mac, uptime = mca['hostname'], mca['mac'], mca['uptime']
-#puts mac
-#puts uptime
+    command = 'mca-dump'
+    command_output = ''
+    metrics_buffer = []
 
-# [47] pry(main)> mca['alarm'].map { |m| Hash[ m['index'], m['entries'].select{|s| s['type'] == 'rmsSum'}.first['val'] ] }
-# => [{"vpower1"=>3360.3125}, {"vpower2"=>1684.6875}]
+    Net::SSH.start(host, user, :password => password) do |ssh|
+      command_output = ssh.exec!(command)
+    end
 
-rmsSums = mca['alarm'].map { |m| Hash[ m['index'], m['entries'].select{|s| s['type'] == 'rmsSum'}.first['val'] ] }
+    mca = JSON.parse(command_output)
+    hostname, mac, uptime = mca['hostname'], mca['mac'], mca['uptime']
+    #puts mac
+    #puts uptime
 
-lables = "mac=\"#{mac}\""
+    # [47] pry(main)> mca['alarm'].map { |m| Hash[ m['index'], m['entries'].select{|s| s['type'] == 'rmsSum'}.first['val'] ] }
+    # => [{"vpower1"=>3360.3125}, {"vpower2"=>1684.6875}]
 
-# select anything from if_table that has a non 0.0.0.0 ip
-active_if_table = mca['if_table'].select {|i| i['ip'] != '0.0.0.0' }
-active_if_table.each do |i|
+    labels = "mac=\"#{mac}\""
 
-metrics_buffer << <<EOB
+    # select anything from if_table that has a non 0.0.0.0 ip
+    active_if_table = mca['if_table'].select { |i| i['ip'] != '0.0.0.0' }
+    active_if_table.each do |i|
+
+      metrics_buffer << <<EOB
 # HELP node_network_receive_bytes Network device statistic receive_bytes
 # TYPE node_network_receive_bytes counter
-node_network_receive_bytes{#{lables},device="#{i['name']}"} #{i['rx_bytes']}
+node_network_receive_bytes{#{labels},device="#{i['name']}"} #{i['rx_bytes']}
 # HELP node_network_receive_drop Network device statistic receive_drop.
 # TYPE node_network_receive_drop counter
-node_network_receive_drop{#{lables},device="#{i['name']}"} #{i['rx_dropped']}
+node_network_receive_drop{#{labels},device="#{i['name']}"} #{i['rx_dropped']}
 # HELP node_network_receive_errs Network device statistic receive_errs.
 # TYPE node_network_receive_errs counter
-node_network_receive_errs{#{lables},device="#{i['name']}"} #{i['rx_errors']}
+node_network_receive_errs{#{labels},device="#{i['name']}"} #{i['rx_errors']}
 # HELP node_network_receive_packets Network device statistic receive_packets.
 # TYPE node_network_receive_packets counter
-node_network_receive_packets{#{lables},device="#{i['name']}"} #{i['rx_packets']}
+node_network_receive_packets{#{labels},device="#{i['name']}"} #{i['rx_packets']}
 # HELP node_network_transmit_bytes Network device statistic transmit_bytes.
 # TYPE node_network_transmit_bytes counter
-node_network_transmit_bytes{#{lables},device="#{i['name']}"} #{i['tx_bytes']}
+node_network_transmit_bytes{#{labels},device="#{i['name']}"} #{i['tx_bytes']}
 # HELP node_network_transmit_drop Network device statistic transmit_drop.
 # TYPE node_network_transmit_drop counter
-node_network_transmit_drop{#{lables},device="#{i['name']}"} #{i['tx_dropped']}
+node_network_transmit_drop{#{labels},device="#{i['name']}"} #{i['tx_dropped']}
 # HELP node_network_transmit_errs Network device statistic transmit_errs.
 # TYPE node_network_transmit_errs counter
-node_network_transmit_errs{#{lables},device="#{i['name']}"} #{i['tx_errors']}
+node_network_transmit_errs{#{labels},device="#{i['name']}"} #{i['tx_errors']}
 # HELP node_network_transmit_packets Network device statistic transmit_packets.
 # TYPE node_network_transmit_packets counter
-node_network_transmit_packets{#{lables},device="#{i['name']}"} #{i['tx_packets']}
+node_network_transmit_packets{#{labels},device="#{i['name']}"} #{i['tx_packets']}
 EOB
 
-end
+    end
 
-metrics_buffer << <<ENDRMS
-# HELP outlet_rms_sum watt hours
-# TYPE outlet_rms_sum counter
+    metrics_buffer << <<ENDRMS
+# HELP mfi_outlet_rms_sum watt hours
+# TYPE mfi_outlet_rms_sum counter
 ENDRMS
 
-rmsSums.each do |outlet|
-  metrics_buffer << "outlet_rms_sum{#{lables},outlet=\"#{outlet.keys.first}\"} #{outlet.values.first}\n"
+    rms_sums = mca['alarm'].map { |m| Hash[m['index'], m['entries'].select { |s| s['type'] == 'rmsSum' }.first['val']] }
+    metrics_buffer << rms_sums.map {|m| "mfi_outlet_rms_sum{#{labels},outlet=\"#{m.keys.first}\"} #{m.values.first}" }
+
+    metrics_buffer.reject { |r| r == "\n" }.join("\n")
+  end
 end
-
-puts metrics_buffer 
-
